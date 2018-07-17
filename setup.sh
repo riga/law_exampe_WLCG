@@ -9,11 +9,18 @@ action() {
     # setup env
     #
 
-    export WLCG_EXAMPLE_BASE="$( dirname "$base" )"
+    # Python >= 2.7 is required
+    if [ "$py_version" = "2.6" ]; then
+        2>&1 echo "Python >= 2.7 is required (try a lxplus7 machine)"
+        return "1"
+    fi
+
+    export WLCG_EXAMPLE_BASE="$base"
     export WLCG_EXAMPLE_STORE="$WLCG_EXAMPLE_BASE/tmp/data"
     export WLCG_EXAMPLE_SOFTWARE="$WLCG_EXAMPLE_BASE/tmp/software"
     export LAW_HOME="$WLCG_EXAMPLE_BASE/.law"
     export LAW_CONFIG_FILE="$WLCG_EXAMPLE_BASE/law.cfg"
+    export LAW_JOB_FILE_DIR="$WLCG_EXAMPLE_BASE/tmp/jobs"
 
     # check if we're on lxplus
     [[ "$( hostname )" = lxplus*.cern.ch ]] && WLCG_EXAMPLE_ON_LXPLUS="1" || WLCG_EXAMPLE_ON_LXPLUS="0"
@@ -57,6 +64,7 @@ action() {
     if [ ! -d "$WLCG_EXAMPLE_SOFTWARE" ]; then
         echo "installing software stack at $WLCG_EXAMPLE_SOFTWARE"
         mkdir -p "$WLCG_EXAMPLE_SOFTWARE"
+        echo ""
 
         _pip_install six
         _pip_install git+https://github.com/spotify/luigi.git

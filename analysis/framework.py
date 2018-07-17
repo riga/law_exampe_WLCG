@@ -19,16 +19,16 @@ import re
 import law
 
 
-# we are going to submit jobs to a GLite backend and store data on a WLCG storage element
+# we are going to submit jobs to a ARC backend and store data on a WLCG storage element
 # the implementations of the classes we need are part of law contrib packages which we need to load
-law.contrib.load("glite")
+law.contrib.load("arc")
 law.contrib.load("wlcg")
 
 # the grid jobs we want submit require our external software as well as the example code repository
 # therefore, we will configure the jobs to transfer everything to a storage element, so the grid
 # jobs can download it again before running (NOTE: we do not send software WITH each job here!)
 # the upload is done by a dedicated task, while the download on the worker node is handled by the
-# glite_bootstrap script
+# arc_bootstrap script
 # we can use some helpers for bundling and file transfer (with replicas for scaling purposes) from
 # law contrib packages
 law.contrib.load("git", "tasks", "wlcg")
@@ -62,39 +62,63 @@ class Task(law.Task):
         return law.WLCGFileTarget(self.wlcg_path(*args), **kwargs)
 
 
-class GridWorkflow(law.GLiteWorkflow):
+class GridWorkflow(law.ARCWorkflow):
     """
-    Here, we need to configure the default law.GLiteWorkflow to a minimal extent in order to send
+    Here, we need to configure the default law.ARCWorkflow to a minimal extent in order to send
     our bootstrap file and some variables to remote jobs. Law does not aim to auto-magically do this
     in a multi-purpose manner for all possible cases, but rather provides a simple interface to
     steer the exact behavior you want in your grid jobs.
     """
 
-    def glite_output_directory(self):
-        # the directory where submission meta data should be stored
-        return law.LocalDirectoryTarget(self.local_path())
+    arc_ce_map = {
+        "DESY": "grid-arcce0.desy.de",
+        "KIT": ["arc-{}-kit.gridka.de".format(i) for i in range(1, 6 + 1)],
+    }
 
-    def glite_create_job_file_factory(self):
+    grid_ce = law.CSVParameter(default=["KIT"], significant=False, description="target computing "
+        "element(s)")
+
+    exclude_params_branch = {"grid_ce"}
+
+    @classmethod
+    def modify_param_values(cls, params):
+        # the law.ARCWorkflow requires a full (or a list of) computing elements, however, we want
+        # to steer it with simple names like "RWTH" or "CNAF", hence we use the modify_param_values
+        # hook to modify parameters before the task is actually instantiated
+        params = super(GridWorkflow, cls).modify_param_values(params)
+        if "workflow" in params and params["workflow"] in (law.NO_STR, "arc"):
+            ces = []
+            for ce in params["grid_ce"]:
+                ces.append(cls.arc_ce_map.get(ce, ce))
+            params["arc_ce"] = tuple(law.util.flatten(ces))
+            params["workflow"] = "arc"
+        return params
+
+    def arc_output_directory(self):
+        # the directory where submission meta data should be stored
+        return law.WLCGDirectoryTarget(self.wlcg_path())
+
+    def arc_create_job_file_factory(self):
         # tell the factory, which is responsible for creating our job files,
         # that the files are not temporary, i.e., it should not delete them after submission
-        factory = super(GridWorkflow, self).glite_create_job_file_factory()
+        factory = super(GridWorkflow, self).arc_create_job_file_factory()
         factory.is_tmp = False
         return factory
 
-    def glite_bootstrap_file(self):
+    def arc_bootstrap_file(self):
         # each job can define a bootstrap file that is executed prior to the actual job
         # in order to setup software and environment variables
-        return law.util.rel_path(__file__, "glite_bootstrap.sh")
+        return law.util.rel_path(__file__, "arc_bootstrap.sh")
 
-    def glite_job_config(self, config, job_num, branches):
-        # render_data is rendered into all files sent with a job, such as the glite_bootstrap file
+    def arc_job_config(self, config, job_num, branches):
+        # render_data is rendered into all files sent with a job, such as the arc_bootstrap file
         config.render_variables["grid_user"] = os.getenv("WLCG_EXAMPLE_GRID_USER")
         return config
 
-    def glite_workflow_requires(self):
-        # requirements of the glite workflow, i.e., upload the software stack and the example repo
+    def arc_workflow_requires(self):
+        # requirements of the arc workflow, i.e., upload the software stack and the example repo
         # with 2 replicas
-        reqs = super(GridWorkflow, self).glite_workflow_requires()
+        reqs = super(GridWorkflow, self).arc_workflow_requires()
 
         reqs["software"] = UploadSoftware.req(self, replicas=2)
         reqs["repo"] = UploadRepo.req(self, replicas=2)
@@ -135,7 +159,7 @@ class UploadRepo(Task, law.BundleGitRepository, law.TransferLocalFile):
 
     def single_output(self):
         path = "{}.{}.tgz".format(os.path.basename(self.repo_path), self.checksum)
-        return self.wlcg_target(path, fs="wlcg_fs_software")
+        return self.wlcg_target(path)
 
     def output(self):
         return law.TransferLocalFile.output(self)
